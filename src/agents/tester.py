@@ -1,5 +1,5 @@
-from autogen_agentchat.agents import AssistantAgent
-from autogen_ext.models import OpenAIChatCompletionClient
+from autogen_agentchat.agents._assistant_agent import AssistantAgent
+from autogen_ext.models._openai._openai_client import OpenAIChatCompletionClient
 from typing import Dict, Any
 
 class TestingAgent(AssistantAgent):
