@@ -1,13 +1,35 @@
 import asyncio
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from autogen import AssistantAgent, GroupChat, GroupChatManager
 from autogen_ext.models import OpenAIChatCompletionClient
+import logging
+from src.config import Config
+from src.monitor import measure_time
+
+logger = logging.getLogger(__name__)
 
 class DebuggingAgent(AssistantAgent):
     """An agent specialized in debugging code and analyzing errors."""
     
-    def __init__(self, name="debugging_agent", **kwargs):
-        system_message = """You are an expert debugging agent that works with a planning agent to solve coding issues.
+    def __init__(
+        self,
+        name: str = "debugging_agent",
+        llm_config: Optional[Dict[str, Any]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        **kwargs
+    ):
+        """
+        Initialize the debugging agent with AutoGen's native configuration.
+        
+        Args:
+            name: Agent identifier
+            llm_config: Language model configuration
+            tools: List of available tools for the agent
+            **kwargs: Additional configuration options
+        """
+        system_message = """
+        You are an expert debugging agent that works with a planning agent to solve coding issues.
+        
         When receiving tasks:
         1. Analyze the problem thoroughly
         2. Report findings back to the planner
@@ -18,60 +40,149 @@ class DebuggingAgent(AssistantAgent):
         - Error message analysis
         - Stack trace interpretation
         - Code fix suggestions
-        - Bug pattern recognition"""
+        - Bug pattern recognition
+        
+        Use TERMINATE when debugging is complete.
+        """
+        
+        # Default debugging tools
+        default_tools = [{
+            "name": "analyze_error",
+            "description": "Analyzes error messages and stack traces",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "error_type": {"type": "string"},
+                    "location": {"type": "string"},
+                    "suggested_fixes": {"type": "array"}
+                }
+            }
+        }]
+        
+        # Merge provided tools with defaults
+        all_tools = (tools or []) + default_tools
+        
+        llm_config = llm_config or Config.get_agent_config("debugger")
         
         super().__init__(
             name=name,
             system_message=system_message,
+            llm_config=llm_config,
+            tools=all_tools,
             **kwargs
         )
 
-    async def analyze_error(self, error_message: str, stack_trace: Optional[str] = None) -> Dict:
-        """Analyzes error messages and stack traces to identify issues."""
+    async def analyze_error(
+        self,
+        error_message: str,
+        stack_trace: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Analyzes error messages and stack traces to identify issues.
         
-        system_prompt = """You are an expert debugging agent. Analyze the provided error and stack trace 
-        to identify the root cause and suggest fixes. Focus on:
-        1. Error type and location
-        2. Potential causes
-        3. Recommended fixes
-        4. Prevention strategies"""
+        Args:
+            error_message: The error message to analyze
+            stack_trace: Optional stack trace information
+            context: Additional context about the error
+            
+        Returns:
+            Dict containing analysis results and suggestions
+        """
+        try:
+            messages = [{
+                "role": "user",
+                "content": f"""
+                Analyze the following error:
+                
+                Error Message: {error_message}
+                Stack Trace: {stack_trace or 'Not provided'}
+                Context: {context or {}}
+                
+                Provide structured analysis focusing on:
+                1. Error type and location
+                2. Potential causes
+                3. Recommended fixes
+                4. Prevention strategies
+                """
+            }]
+            
+            response = await self.generate_reply(messages)
+            
+            return {
+                'success': True,
+                'analysis': response.content,
+                'metadata': {
+                    'suggestions': response.suggested_actions,
+                    'key_points': response.key_points
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in error analysis: {str(e)}", exc_info=True)
+            return {
+                'success': False,
+                'error': str(e),
+                'metadata': {}
+            }
 
-        user_message = f"""Error Message: {error_message}
-        Stack Trace: {stack_trace if stack_trace else 'Not provided'}
+    async def suggest_fixes(
+        self,
+        code: str,
+        issues: List[str],
+        requirements: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Generates potential fixes for identified issues.
         
-        Please provide a structured analysis."""
-
-        response = await self.model_client.complete(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message}
-            ]
-        )
-        
-        return response
-
-    async def suggest_fixes(self, code: str, issues: List[str]) -> Dict:
-        """Generates potential fixes for identified issues."""
-        
-        system_prompt = """You are an expert code fixer. Review the code and reported issues
-        to suggest specific fixes. Provide:
-        1. Code modifications
-        2. Explanation of changes
-        3. Testing recommendations"""
-
-        user_message = f"""Code: {code}
-        Reported Issues: {', '.join(issues)}
-        
-        Please suggest fixes."""
-
-        response = await self.model_client.complete(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message}
-            ]
-        )
-        
-        return response
+        Args:
+            code: The problematic code
+            issues: List of identified issues
+            requirements: Optional requirements and constraints
+            
+        Returns:
+            Dict containing suggested fixes and explanations
+        """
+        try:
+            messages = [{
+                "role": "user",
+                "content": f"""
+                Review and suggest fixes for the following code:
+                
+                Code:                ```
+                {code}                ```
+                
+                Identified Issues:
+                {', '.join(issues)}
+                
+                Requirements:
+                {requirements or {}}
+                
+                Provide:
+                1. Specific code modifications
+                2. Explanation of changes
+                3. Testing recommendations
+                """
+            }]
+            
+            response = await self.generate_reply(messages)
+            
+            return {
+                'success': True,
+                'fixes': response.content,
+                'metadata': {
+                    'suggestions': response.suggested_actions,
+                    'key_points': response.key_points
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in suggesting fixes: {str(e)}", exc_info=True)
+            return {
+                'success': False,
+                'error': str(e),
+                'metadata': {}
+            }
 
 # Example usage
 async def main():

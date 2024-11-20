@@ -1,7 +1,10 @@
 from typing import Optional, Dict, List, Any
 from dataclasses import dataclass
-from autogen_agentchat.agents import AssistantAgent
-from autogen_ext.models import OpenAIChatCompletionClient
+from autogen import AssistantAgent
+import logging
+from src.config import Config
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class PlanningResult:
@@ -12,18 +15,19 @@ class PlanningResult:
     message: Optional[str] = None
 
 class PlanningAgent(AssistantAgent):
-    """
-    Lead architect and coordinator agent that manages the development workflow.
-    Acts as the central hub for communication between user and other agents.
-    """
-    
-    def __init__(self):
+    def __init__(
+        self,
+        name: str = "planner",
+        llm_config: Optional[Dict[str, Any]] = None,
+        **kwargs
+    ):
+        llm_config = llm_config or Config.get_agent_config("planner")
+        
         super().__init__(
-            name="planner",
-            model_client=OpenAIChatCompletionClient(
-                model="gpt-4-0125-preview",
-            ),
-            system_message=self._get_system_message()
+            name=name,
+            system_message=self._get_system_message(),
+            llm_config=llm_config,
+            **kwargs
         )
         self._initialize_workflow_templates()
     
